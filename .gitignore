@@ -1,0 +1,7 @@
+data/
+data_train/
+results/
+figures/
+venv/
+__pycache__/
+*.pyc
