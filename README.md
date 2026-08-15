@@ -376,3 +376,8 @@ The results should not be interpreted as nanometer-scale physical positioning ac
 
 ## 16. License
 
+This project is intended for academic, educational, and research purposes.
+
+The source code may be used, modified, and extended for non-commercial research and learning. Any use of the project or results should appropriately acknowledge the DRIFT-SENSE project and its contributors.
+
+For commercial use or redistribution, please contact the project owner for permission.
