@@ -219,46 +219,101 @@ The pipeline performs:
 
 ---
 
-## 8. Results
+## 8. Training the CNN Backbone
 
-The latest 30-sample evaluation produced the following results:
+`DriftSenseCNN` ships untrained by default. `src/train_cnn.py` trains it with a
+triplet loss (reference patch = anchor, true-location crop = positive,
+random wrong-location crop = negative) using only the
+`(reference, search, ground_truth)` triples `dataset_generator.py` already
+produces — no manual labeling required.
+
+```
+# 1. Generate a training set (hundreds-thousands of samples; 30 is only
+#    enough for evaluation, not training)
+python src/dataset_generator.py --n 800 --out data_train --seed 1
+
+# 2. Train
+python src/train_cnn.py --data_dir data_train --epochs 15 --out weights/driftsense_cnn.pt
+
+# 3. Point the evaluation pipeline at the trained weights
+python run_pipeline.py --n 30 --weights weights/driftsense_cnn.pt
+```
+
+**Honest note on training set size:** a 300-sample / 15-epoch run reduced
+the triplet loss from 0.097 to 0.017 and cut inference time roughly 6×,
+but overall localization accuracy on the 30-sample eval set *decreased*
+slightly compared to the untrained baseline (96.67% → 90.0%) — the
+classical NCC branch was still resolving most cases correctly on its own,
+and 300 triplets isn't enough for the CNN branch to consistently add
+value on top of it. Scaling to 800+ samples and more epochs is the
+natural next step before trusting the CNN branch's contribution.
+
+## 9. Calibrating Pixel-to-Physical Scale
+
+Before reporting any nanometer/micron-scale correction, `s_x` and `s_y`
+(pixels → physical distance) must be calibrated against the real imaging
+and stage system — see `src/calibrate_scale.py`. It takes a set of
+reference/search image pairs captured after a **known** physical stage
+move, measures the pixel shift DRIFT-SENSE recovers, and derives
+`s_x = known_physical_dx / measured_pixel_dx` (averaged over several
+moves). Until this is done, only pixel-space accuracy is defensible.
+
+```
+python src/calibrate_scale.py --calib_dir calibration_shots --weights weights/driftsense_cnn.pt
+```
+
+## 10. Results
+
+The latest 30-sample evaluation (trained CNN, 300-sample/15-epoch run)
+produced the following results:
 
 | Metric | Result |
 |---|---:|
 | Number of test cases | 30 |
-| Localization accuracy | **96.67%** |
+| Localization accuracy | **90.0%** |
 | Tolerance | 20 px |
-| Mean localization error | **2.216 px** |
-| Maximum localization error | **62.973 px** |
-| Average confidence | **0.872** |
-| Average inference time | **771.82 ms** |
+| Mean localization error | **11.887 px** |
+| Maximum localization error | **154.159 px** |
+| Average confidence | **0.878** |
+| Average inference time | **129.23 ms** |
 | Image resolution | **1000 × 1000 pixels** |
 
-One failure case was recorded at sample 23 with an error of approximately 62.97 pixels.
+One failure case was recorded at sample 23 with an error of approximately
+154.16 pixels. Its confidence score was 0.76 and was flagged
+**reliable=true** — the confidence estimator did not catch this failure,
+which is a real limitation worth stating explicitly rather than implying
+confidence reliably filters every failure mode.
 
-This failure is intentionally retained for honest failure analysis rather than reporting an artificial 100% success rate.
+This failure is intentionally retained for honest failure analysis rather
+than reporting an artificial 100% success rate.
 
----
-
-## 9. Comparison with Conventional Methods
-
-The latest evaluation produced the following comparison:
-
-| Method | Mean Error (px) | Median Error (px) | Runtime (ms) |
-|---|---:|---:|---:|
-| CNN Matching | 114.43 | 124.33 | 403.13 |
-| **DRIFT-SENSE** | **2.22** | **0.10** | 674.20 |
-| NCC Multi-scale | 2.50 | 0.45 | 46.26 |
-| SIFT/ORB | — | — | 102.35 |
-| Template Matching | 2.71 | 0.61 | 1.82 |
-
-DRIFT-SENSE provides substantially lower mean localization error than the CNN-only baseline in the current synthetic evaluation.
-
-The classical NCC-based methods are faster, while the proposed hybrid pipeline combines learned feature extraction, candidate generation, fine registration, subpixel localization and confidence estimation.
+*(Both the pre-training and post-training runs are synthetic-dataset
+results with an untrained-vs-trained CNN branch; neither should be read
+as a claim about real wafer-inspection performance — see Limitations.)*
 
 ---
 
-## 10. Output Files
+## 11. Comparison with Conventional Methods
+
+The latest evaluation (trained CNN, 300-sample/15-epoch run) produced the following comparison:
+
+| Method | Mean Error (px) | Median Error (px) | Failure Rate (%) | Runtime (ms) |
+|---|---:|---:|---:|---:|
+| CNN Matching (no fine reg.) | 101.30 | 113.93 | 0.0 | 36.17 |
+| **DRIFT-SENSE (proposed)** | **11.89** | **0.12** | 0.0 | 119.97 |
+| NCC Multi-scale | 11.52 | 0.43 | 0.0 | 40.99 |
+| SIFT/ORB | — | — | **100.0** | 2.91 |
+| Template Matching | 11.81 | 0.54 | 0.0 | 1.69 |
+
+DRIFT-SENSE still provides substantially lower mean localization error than the CNN-only baseline. Its median error (0.12px) is the best of the group, meaning it's usually very precise, but its mean is close to the classical NCC and template-matching baselines — a few harder cases (like sample 23, see Section 10) pull the mean up.
+
+**Known issue:** SIFT/ORB failed on 100% of test cases in this run — almost certainly too few detectable keypoints on the synthetic wafer patterns, not a fundamental SIFT/ORB weakness. This should be investigated (e.g. tune the ORB detector's feature-count/threshold parameters, or use richer synthetic textures) before this row is presented as a fair comparison in the paper.
+
+The classical NCC-based methods remain faster, while the proposed hybrid pipeline combines learned feature extraction, candidate generation, fine registration, subpixel localization and confidence estimation.
+
+---
+
+## 12. Output Files
 
 After running the pipeline, results are generated in:
 
@@ -285,7 +340,7 @@ figures/
 
 ---
 
-## 11. Technology Stack
+## 13. Technology Stack
 
 ```text
 Programming       : Python 3
@@ -300,7 +355,7 @@ The current evaluation was performed on CPU.
 
 ---
 
-## 12. Project Structure
+## 14. Project Structure
 
 ```text
 DRIFT-SENSE-build/
@@ -318,11 +373,15 @@ DRIFT-SENSE-build/
 │   ├── evaluate_pipeline.py
 │   ├── compare_methods.py
 │   ├── generate_graphs.py
-│   └── final_summary.py
+│   ├── final_summary.py
+│   ├── train_cnn.py
+│   └── calibrate_scale.py
 │
 ├── weights/
 │   └── driftsense_cnn.pt
 │
+├── data_train/          (generated by dataset_generator.py for training)
+├── calibration_shots/   (your real known-displacement calibration images)
 ├── data/
 │   ├── reference/
 │   ├── test/
@@ -337,7 +396,7 @@ DRIFT-SENSE-build/
 
 ---
 
-## 13. Limitations
+## 15. Limitations
 
 The current results should be interpreted within the scope of the synthetic dataset.
 
@@ -345,28 +404,33 @@ Important limitations are:
 
 - The evaluation is not yet a validation on real wafer-inspection imagery.
 - Pixel-space accuracy does not directly represent physical stage accuracy.
-- Physical or nanometer-scale claims require calibration of the pixel-to-distance parameters.
+- Physical or nanometer-scale claims require calibration of the pixel-to-distance parameters (see `src/calibrate_scale.py`, Section 9).
 - Performance can vary with image quality, pattern repetitiveness and severe transformations.
 - The current CPU implementation has higher runtime than purely classical template matching.
+- The 300-sample / 15-epoch trained CNN did not outperform the untrained baseline on this dataset — the classical NCC branch still resolves most cases; a larger training set is needed before the CNN branch's contribution can be trusted (Section 8).
+- The confidence estimator does not catch every failure: the recorded failure case (sample 23, Section 10) was flagged `reliable=true` despite a 154px error, so confidence should not be treated as a hard reliability guarantee.
+- SIFT/ORB failed on 100% of samples in the current comparison run; this is likely a parameter/data issue with the synthetic patterns rather than a fundamental result and should be fixed before publishing the comparison table as-is.
 
 ---
 
-## 14. Future Improvements
+## 16. Future Improvements
 
 Future development can include:
 
-1. Training and fine-tuning the CNN on real wafer-inspection data.
-2. Increasing the diversity and realism of the synthetic dataset.
+1. Scaling the training set to 800+ samples (per `train_cnn.py`'s own guidance) and re-evaluating whether the trained CNN branch beats the untrained baseline.
+2. Getting access to even a small real wafer-inspection image set for validation beyond synthetic data.
 3. Improving robustness against repetitive patterns.
 4. Optimizing inference for GPU execution.
 5. Reducing the computational cost of multi-scale and rotation search.
-6. Calibrating pixel-to-physical-distance conversion.
+6. Running `src/calibrate_scale.py` against the real imaging/stage setup to obtain defensible `s_x`/`s_y`.
 7. Evaluating the system using real navigation/stage measurements.
 8. Performing larger-scale statistical validation.
+9. Debugging the SIFT/ORB 100% failure rate before including it in the paper's comparison table.
+10. Investigating why the confidence estimator missed the sample-23 failure, to make `reliable` a more trustworthy flag.
 
 ---
 
-## 15. Research Note
+## 17. Research Note
 
 The current results demonstrate **subpixel image localization capability on a synthetic dataset**.
 
@@ -374,7 +438,7 @@ The results should not be interpreted as nanometer-scale physical positioning ac
 
 ---
 
-## 16. License
+## 18. License
 
 This project is intended for academic, educational, and research purposes.
 
