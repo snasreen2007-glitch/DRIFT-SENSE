@@ -48,7 +48,7 @@ def method_ncc_multiscale(reference, search):
 
 def method_orb(reference, search):
     t0 = time.time()
-    orb = cv2.ORB_create(500)
+    orb = cv2.ORB_create(nfeatures=200, edgeThreshold=8, patchSize=16)
     kp1, des1 = orb.detectAndCompute(reference, None)
     kp2, des2 = orb.detectAndCompute(search, None)
     if des1 is None or des2 is None or len(kp1) < 4 or len(kp2) < 4:

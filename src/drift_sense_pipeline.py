@@ -84,7 +84,13 @@ class DriftSenseDetector:
         for c in candidates:
             fm = fine_register(search, reference, center_xy=(c.x, c.y), candidate_scale=c.scale)
             fine_results.append((c, fm))
-        fine_results.sort(key=lambda t: t[1].ncc_score, reverse=True)
+        # Blend the fine NCC score with each candidate's own coarse score
+        # (CNN cosine similarity or classical NCC, whichever produced it)
+        # so a well-trained CNN branch can actually outvote a classical
+        # candidate that only looks good locally -- previously this sort
+        # used ncc_score alone, which meant the CNN branch could only ever
+        # *propose* candidates, never influence which one won.
+        fine_results.sort(key=lambda t: 0.7 * t[1].ncc_score + 0.3 * t[0].score, reverse=True)
 
         best_candidate, best_fine = fine_results[0]
         second_best_ncc = fine_results[1][1].ncc_score if len(fine_results) > 1 else -1.0
